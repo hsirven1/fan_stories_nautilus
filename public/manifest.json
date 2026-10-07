@@ -1,6 +1,6 @@
 {
-  "short_name": "BIXI 2026",
-  "name": "Votre saison BIXI 2026",
+  "short_name": "Nautilus Plus 2026",
+  "name": "Nautilus Plus, Ton année 2026",
   "icons": [
     {
       "src": "favicon.ico",
@@ -20,6 +20,6 @@
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#EE3124",
+  "theme_color": "#E30613",
   "background_color": "#0A0A0A"
 }

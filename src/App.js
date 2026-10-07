@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, createContext, useContext } from "react";
+import { Fragment, useState, useRef, useEffect, useLayoutEffect, useMemo, createContext, useContext } from "react";
 import { flushSync } from "react-dom";
 import { motion, AnimatePresence, animate, useMotionValue, useReducedMotion } from "framer-motion";
 import html2canvas from "html2canvas";
@@ -6,91 +6,114 @@ import html2canvas from "html2canvas";
 // ---------------------------------------------------------------------------
 // Brand palette
 // ---------------------------------------------------------------------------
-const RED = "#EE3124";
+const BRAND_PRIMARY = "#E72D36";
 const BLACK = "#0A0A0A";
-// E-bike accent: used only on the electric slide.
-const ELECTRIC_BLUE = "#1F5BD6";
-const ELECTRIC_NAVY = "#0B1530";
 const WHITE = "#FFFFFF";
-const BORDER = "#E0E0E0";
 const LABEL_GRAY = "rgba(10,10,10,0.55)";
 
-const HEAD = "'Nunito', sans-serif"; // headlines — closest to BIXI's GT Maru
-const BODY = "'Inter', sans-serif"; // body copy
-const BRAND = "'Space Grotesk', sans-serif"; // sponsor wordmark only
+const hexRgb = (hex) => {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+const brandAlpha = (a) => `rgba(${hexRgb(BRAND_PRIMARY).join(",")},${a})`;
+// Deeper shade of the brand color, for gradients.
+const BRAND_DEEP = `rgb(${hexRgb(BRAND_PRIMARY).map((c) => Math.round(c * 0.8)).join(",")})`;
+
+// Noyh is self-hosted from /fonts (see @font-face in App); Oswald stands in until it loads.
+const DISPLAY = "'Noyh', 'Oswald', sans-serif"; // hero headings: 900 (Heavy), supporting display: 300 (Light)
+const CONDENSED = "'Oswald', sans-serif"; // navigation, buttons, condensed headings: 300 / 400 (Book) / 700
+const BODY = "'Lato', sans-serif"; // body copy
 
 // ---------------------------------------------------------------------------
-// Hardcoded demo data — one rider's 2026 in BIXI
+// Hardcoded demo data — one member's 2026 at Nautilus Plus
 // ---------------------------------------------------------------------------
 const RECAP = {
-  rides: 187,
-  km: 743,
-  electricRides: 41,
-  co2Saved: 89, // kg
-  neighborhood: "Plateau-Mont-Royal",
-  bestMonth: "Juillet",
-  bestMonthRides: 47,
-  style: "quotidien",
-  minutesSaved: 2240,
-  ridingMinutes: 3975,
-  stationsUsed: 34,
-  favoriteStation: "Station Parc Jeanne-Mance",
-  stationRides: 47,
+  visits: 148,
+  groupClasses: 62,
+  favoriteClass: "Spinning",
+  favoriteTime: "6 h",
+  longestStreakWeeks: 11,
+  favoriteGym: "Nautilus Plus Bois-Franc",
+  hoursTrained: 171,
+  trainerSessions: 8,
+  bestMonth: "Janvier",
+  bestMonthVisits: 19,
 };
 
-// Derived numbers
-const electricPct = Math.round((RECAP.electricRides / RECAP.rides) * 100); // 22%
-const ridesPerWeek = (RECAP.rides / 52).toFixed(1).replace(".", ","); // "3,6"
-const treesEquiv = Math.max(1, Math.round(RECAP.co2Saved / 21)); // ~1 tree ≈ 21kg CO₂ / yr → 4
-
-const SEASON_BARS = [
-  { month: "Avr", value: 12 },
-  { month: "Mai", value: 28 },
-  { month: "Juin", value: 35 },
-  { month: "Juil", value: 47, highlight: true },
-  { month: "Août", value: 41 },
-  { month: "Sep", value: 32 },
-  { month: "Oct", value: 18 },
-  { month: "Nov", value: 8 },
+const CLASS_BREAKDOWN = [
+  { name: "Spinning", value: 28 },
+  { name: "HIIT", value: 18 },
+  { name: "Yoga", value: 10 },
+  { name: "Zumba", value: 6 },
 ];
-const SEASON_BAR_MAX = 47;
+
+// Visits per month; sums to RECAP.visits.
+const MONTH_BARS = [
+  { label: "Jan", value: 19, highlight: true },
+  { label: "Fév", value: 14 },
+  { label: "Mar", value: 13 },
+  { label: "Avr", value: 12 },
+  { label: "Mai", value: 11 },
+  { label: "Juin", value: 10 },
+  { label: "Juil", value: 9 },
+  { label: "Août", value: 8 },
+  { label: "Sep", value: 13 },
+  { label: "Oct", value: 14 },
+  { label: "Nov", value: 13 },
+  { label: "Déc", value: 12 },
+];
+
+// Visits by hour of arrival (0 h → 23 h); sums to RECAP.visits.
+const FAVORITE_HOUR = 6;
+const HOUR_VISITS = [0, 0, 0, 0, 0, 14, 46, 22, 8, 3, 2, 2, 9, 4, 1, 1, 3, 10, 12, 7, 3, 1, 0, 0];
+const HOUR_BARS = HOUR_VISITS.map((value, h) => ({
+  label: h % 6 === 0 ? `${h} h` : "",
+  value,
+  highlight: h === FAVORITE_HOUR,
+}));
+
+// Calendar heatmap: 52 weeks × 7 days. Each month gets its visit count, spread over
+// its days with a seeded shuffle so the pattern is stable between renders.
+const HEATMAP_WEEKS = 52;
+const HEATMAP_DAYS = HEATMAP_WEEKS * 7;
+const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+const VISIT_DAYS = (() => {
+  let seed = 2026;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+  const days = [];
+  let start = 0;
+  MONTH_BARS.forEach(({ value }, m) => {
+    const len = Math.min(MONTH_LENGTHS[m], HEATMAP_DAYS - start);
+    const pool = Array.from({ length: len }, (_, i) => start + i);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    days.push(...pool.slice(0, value).sort((a, b) => a - b));
+    start += MONTH_LENGTHS[m];
+  });
+  return days;
+})();
+// Day index → its rank among visit days (they light up chronologically), or -1.
+const VISIT_ORDER = (() => {
+  const order = new Array(HEATMAP_DAYS).fill(-1);
+  VISIT_DAYS.forEach((day, i) => { order[day] = i; });
+  return order;
+})();
 
 // ---------------------------------------------------------------------------
-// Rider profiles — French titles + templated French descriptions
+// Member persona
 // ---------------------------------------------------------------------------
-const PROFILES = {
-  regular: {
-    title: "L'ABONNÉ FIDÈLE",
-    desc: (d) => `${d.rides} trajets cette année — l'abonnement, c'est votre deuxième maison. Le ${d.neighborhood}, votre point de départ habituel.`,
-    shareDesc: "Toujours là, toujours prêt. Le BIXI fait partie de votre routine.",
-  },
-  quotidien: {
-    title: "LE BIXISTE DU QUOTIDIEN",
-    desc: (d) => `Beau temps, mauvais temps, le BIXI fait partie de votre routine. ${d.rides} trajets, ça ne ment pas.`,
-    shareDesc: "Beau temps, mauvais temps, le BIXI fait partie de votre routine.",
-  },
-  explorer: {
-    title: "L'EXPLORATEUR",
-    desc: (d) => `${d.stationsUsed} stations découvertes, ${d.km} km au compteur. Montréal n'a plus de secrets pour vous.`,
-    shareDesc: "Chaque trajet, un nouveau quartier. Montréal n'a plus de secrets pour vous.",
-  },
-  bixiste: {
-    title: "LE BIXISTE",
-    desc: (d) =>
-      `Un vrai du ${d.neighborhood}. ${d.rides} trajets, dont ${d.electricRides} en électrique, et ${d.km} km au compteur. ${d.bestMonth} a été votre mois le plus actif.`,
-    shareDesc: "187 trajets. Vous n'avez pas besoin d'explication.",
-  },
-  speedster: {
-    title: "LE SPEEDSTER",
-    desc: (d) => `${d.minutesSaved} minutes gagnées sur la route. Vous ne perdez pas de temps — ${d.rides} trajets, toujours l'œil sur l'horloge.`,
-    shareDesc: "Vite, efficace, sans détour. Le chrono ne ment pas.",
-  },
+const PERSONA = {
+  title: "LÈVE-TÔT",
+  desc: (d) => `Tu commences ta journée avant tout le monde. ${d.visits} visites, ça ne s'improvise pas.`,
+  traits: (d) => [`${d.visits} visites`, `${d.favoriteTime} du matin`, `${d.longestStreakWeeks} semaines d'affilée`],
 };
 
-const PROFILE = PROFILES[RECAP.style];
-
-const SHARE_FILENAME = "votre-2026-en-bixi.png";
-const JOIN_CODE = "BIXISTE2026";
+const SHARE_FILENAME = "ton-annee-2026-nautilus-plus.png";
 
 // Share images: 9:16, exported at 1080×1920.
 const SHARE_IMG_W = 396;
@@ -215,10 +238,9 @@ const AnimatedNumber = ({ value, end, style, tracking = -0.045 }) => {
 // Data slide layout — number, visualization, label, sentence; one block, left-aligned.
 // ---------------------------------------------------------------------------
 const DATA_TONES = {
-  white: { number: RED, label: BLACK, sentence: "#666666" },
-  red: { number: WHITE, label: WHITE, sentence: "rgba(255,255,255,0.8)" },
+  white: { number: BRAND_PRIMARY, label: BLACK, sentence: "#666666" },
+  brand: { number: WHITE, label: WHITE, sentence: "rgba(255,255,255,0.8)" },
   dark: { number: WHITE, label: WHITE, sentence: "rgba(255,255,255,0.7)" },
-  electric: { number: ELECTRIC_BLUE, label: WHITE, sentence: "rgba(255,255,255,0.7)" },
 };
 const DATA_NUMBER_SIZE = 96;
 const DATA_NUMBER_TRACKING_PX = -2;
@@ -240,7 +262,7 @@ const EntranceStep = ({ step, style, children, ...rest }) => {
 };
 
 const dataNumberStyle = (color) => ({
-  fontFamily: HEAD,
+  fontFamily: DISPLAY,
   fontWeight: 900,
   fontSize: DATA_NUMBER_SIZE,
   letterSpacing: DATA_NUMBER_TRACKING_PX,
@@ -268,7 +290,7 @@ const DataSlide = ({ tone, hero, label, sentence }) => {
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "center", paddingBottom: 48 }}>
         {hero}
         <EntranceStep step={ENTRANCE_STEP.text}>
-          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 24, lineHeight: 1.2, color: colors.label, marginTop: 24 }}>
+          <div style={{ fontFamily: DISPLAY, fontWeight: 300, fontSize: 24, lineHeight: 1.2, color: colors.label, marginTop: 24 }}>
             {label}
           </div>
           <div style={{ fontFamily: BODY, fontWeight: 400, fontSize: 17, lineHeight: 1.45, color: colors.sentence, marginTop: 8 }}>
@@ -280,99 +302,147 @@ const DataSlide = ({ tone, hero, label, sentence }) => {
   );
 };
 
-// Stylized island of Montréal: smooth closed outline, SW tip bottom-left → NE tip top-right.
-// The loop starts and ends at the path's first point.
-const ISLAND_PATH = "M20 78 C14 66 40 56 70 50 C100 44 120 34 150 22 C170 14 192 10 194 20 C196 30 176 40 150 52 C120 66 96 72 66 80 C42 86 24 88 20 78 Z";
-const ISLAND_START = { x: 20, y: 78 };
-const ISLAND_VIEWBOX = "4 0 200 98";
-const ISLAND_FILL = "#EEEEEE";
-const ISLAND_LOOPS = 15;
-// One slow loop around the island. The loop, the rider and the ×N counter all follow
-// the km count-up's progress, so they land together with 743.
-const KmIslandHero = ({ km }) => {
-  const { value, progress } = useCountUp(km);
-  const outlineRef = useRef(null);
-  const loops = 1 + Math.round((ISLAND_LOOPS - 1) * progress);
+// One square per day of the year; visit days light up chronologically as the count climbs,
+// so the grid and the number share a single count value.
+const HEATMAP_GAP = 1.5;
 
-  const outline = outlineRef.current;
-  const rider = progress >= 1 || !outline
-    ? ISLAND_START
-    : outline.getPointAtLength(progress * outline.getTotalLength());
-
+const VisitsHeatmapHero = ({ visits }) => {
+  const { value } = useCountUp(visits);
   return (
     <>
-      <DataNumber value={value} end={km} unit="KM" color={DATA_TONES.white.number} />
+      <DataNumber value={value} end={visits} color={DATA_TONES.dark.number} />
       <DataVisual>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <svg
-            viewBox={ISLAND_VIEWBOX}
-            style={{ flex: 1, minWidth: 0, height: "auto", display: "block", overflow: "visible" }}
-          >
-            <path
-              ref={outlineRef}
-              d={ISLAND_PATH}
-              fill={ISLAND_FILL}
-              stroke={ISLAND_FILL}
-              strokeWidth="6"
-              strokeLinejoin="round"
+        <div
+          style={{
+            display: "grid",
+            gridAutoFlow: "column",
+            gridTemplateRows: "repeat(7, auto)",
+            gridTemplateColumns: `repeat(${HEATMAP_WEEKS}, 1fr)`,
+            gap: HEATMAP_GAP,
+          }}
+        >
+          {VISIT_ORDER.map((order, day) => (
+            <span
+              key={day}
+              style={{
+                aspectRatio: "1",
+                borderRadius: 1,
+                background: order >= 0 && order < value ? BRAND_PRIMARY : "rgba(255,255,255,0.1)",
+                transition: "background-color 0.2s ease-out",
+              }}
             />
-            <path
-              d={ISLAND_PATH}
-              fill="none"
-              stroke={RED}
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              pathLength="1"
-              strokeDasharray="1 1"
-              strokeDashoffset={1 - progress}
-            />
-            <circle cx={rider.x} cy={rider.y} r="6" fill={RED} stroke={WHITE} strokeWidth="2" />
-          </svg>
-          <div style={{ ...heroNumber(44, RED), lineHeight: 1, flexShrink: 0, display: "flex", alignItems: "flex-start" }}>
-            <span style={{ fontSize: 28, marginTop: 4, marginRight: 1 }}>×</span>
-            <AnimatedNumber value={loops} end={ISLAND_LOOPS} />
-          </div>
+          ))}
         </div>
       </DataVisual>
     </>
   );
 };
 
-// One dot per ride; dots light up as the count climbs, so both share a single count value.
-// Columns spread so the grid spans the full text width.
-const RIDE_DOTS_PER_ROW = 17;
-const RIDE_DOT = 9;
-const RIDE_DOT_ROW_GAP = 7;
+// Horizontal bars fill one after another as the total climbs: each class owns its slice
+// of the count, so the bars and the number land together.
+const CLASS_REVEAL_S = (COUNT_UP_DELAY_MS + COUNT_UP_MS * 0.6) / 1000;
 
-const RidesCountHero = ({ rides }) => {
-  const { progress } = useCountUp(rides);
-  const lit = Math.round(rides * progress);
+const GroupClassesHero = ({ total, classes, favorite }) => {
+  const { value, progress } = useCountUp(total);
+  const counted = total * progress;
+  const max = Math.max(...classes.map((c) => c.value));
+  let start = 0;
   return (
     <>
-      <DataNumber value={lit} end={rides} color={DATA_TONES.red.number} />
+      <DataNumber value={value} end={total} color={DATA_TONES.brand.number} />
       <DataVisual>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: `repeat(${RIDE_DOTS_PER_ROW}, ${RIDE_DOT}px)`,
-            justifyContent: "space-between",
-            rowGap: RIDE_DOT_ROW_GAP,
-          }}
-        >
-          {Array.from({ length: rides }, (_, i) => (
-            <span
-              key={i}
-              style={{
-                width: RIDE_DOT,
-                height: RIDE_DOT,
-                borderRadius: "50%",
-                background: WHITE,
-                opacity: i < lit ? 1 : 0.2,
-                transition: "opacity 0.2s ease-out",
-              }}
-            />
-          ))}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {classes.map((c) => {
+            const filled = Math.min(c.value, Math.max(0, counted - start));
+            start += c.value;
+            const isFavorite = c.name === favorite;
+            return (
+              <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ width: 72, flexShrink: 0, fontFamily: BODY, fontWeight: 400, fontSize: 13, color: WHITE, lineHeight: 1 }}>
+                  {c.name}
+                </span>
+                <div style={{ flex: 1, height: 12, borderRadius: 6, background: "rgba(255,255,255,0.15)", overflow: "hidden" }}>
+                  <div style={{
+                    width: `${(filled / max) * 100}%`,
+                    height: "100%",
+                    borderRadius: 6,
+                    background: isFavorite ? WHITE : "rgba(255,255,255,0.45)",
+                  }} />
+                </div>
+                <span style={{ width: 24, flexShrink: 0, textAlign: "right", fontFamily: CONDENSED, fontWeight: 700, fontSize: 15, color: WHITE, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+                  {Math.round(filled)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </DataVisual>
+      <FadeUp delay={CLASS_REVEAL_S} y={8} style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 18 }}>
+        <span style={{ fontFamily: BODY, fontSize: 14, color: "rgba(255,255,255,0.8)", lineHeight: 1 }}>Ton cours préféré</span>
+        <span style={{
+          fontFamily: CONDENSED,
+          fontWeight: 700,
+          fontSize: 14,
+          letterSpacing: 0.6,
+          textTransform: "uppercase",
+          lineHeight: 1,
+          padding: "8px 12px",
+          borderRadius: 999,
+          background: WHITE,
+          color: BRAND_PRIMARY,
+        }}>
+          {favorite}
+        </span>
+      </FadeUp>
+    </>
+  );
+};
+
+// One block per week of the streak; blocks light up with the count, and the flame pops
+// into the last one when the count lands.
+const FLAME_PATH = "M12 2c.6 3.3 2.7 5 4.3 6.9C17.8 10.7 19 12.6 19 15a7 7 0 0 1-14 0c0-2.4 1.1-4.1 2.4-5.3.2 1.6 1 2.8 2.3 3.3C9.3 9.4 10.3 5.3 12 2Z";
+
+const StreakBlocksHero = ({ weeks }) => {
+  const reduced = useStill();
+  const { value } = useCountUp(weeks);
+  return (
+    <>
+      <DataNumber value={value} end={weeks} color={DATA_TONES.brand.number} />
+      <DataVisual>
+        <div style={{ display: "flex", gap: 6 }}>
+          {Array.from({ length: weeks }, (_, i) => {
+            const lit = i < value;
+            return (
+              <div
+                key={i}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: 44,
+                  borderRadius: 8,
+                  background: lit ? WHITE : "rgba(255,255,255,0.2)",
+                  transition: "background-color 0.2s ease-out",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {i === weeks - 1 && (
+                  <motion.svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    initial={reduced ? false : { scale: 0, opacity: 0 }}
+                    animate={lit ? { scale: 1, opacity: 1 } : { scale: 0, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 420, damping: 14 }}
+                    style={{ display: "block", transformOrigin: "50% 100%" }}
+                  >
+                    <path d={FLAME_PATH} fill={BRAND_PRIMARY} />
+                  </motion.svg>
+                )}
+              </div>
+            );
+          })}
         </div>
       </DataVisual>
     </>
@@ -412,38 +482,38 @@ const BreathingBlob = ({ color, size = 320, style, duration = 9 }) => (
   />
 );
 
-// Simple rounded BIXI-style bike icon
-const BikeIcon = ({ size = 44, color = RED }) => (
-  <svg width={size} height={size * 0.72} viewBox="0 0 50 36" fill="none">
-    <circle cx="11" cy="26" r="8" stroke={color} strokeWidth="3.4" />
-    <circle cx="39" cy="26" r="8" stroke={color} strokeWidth="3.4" />
-    <path d="M11 26 L21 26 L28 13 L19 13" stroke={color} strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M21 26 L28 13" stroke={color} strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M28 13 L39 26" stroke={color} strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M19 13 L17 9 L22 9" stroke={color} strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="21" cy="26" r="2.6" fill={color} />
+const DumbbellIcon = ({ size = 24, color = WHITE }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} aria-hidden style={{ display: "block", flexShrink: 0 }}>
+    <rect x="1.5" y="9" width="2.5" height="6" rx="1" />
+    <rect x="4.5" y="6" width="3.5" height="12" rx="1.2" />
+    <rect x="8" y="10.75" width="8" height="2.5" rx="1" />
+    <rect x="16" y="6" width="3.5" height="12" rx="1.2" />
+    <rect x="20" y="9" width="2.5" height="6" rx="1" />
   </svg>
 );
 
-const BOLT_PATH = "M13 2 L4 14 h6 l-1 8 9 -12 h-6 z";
+const GYM_PHOTO_URL = "/nautilus-gym.jpg";
+const GYM_ADDRESS = "1920, boulevard Marcel-Laurin, Saint-Laurent";
 
-const STATION_PHOTO_URL = "/station-mont-royal.jpg";
-const favoriteStationDisplayLabel = (station) =>
-  station.replace(/^Station\s+/, "");
-
-const SPONSOR = "SPONSOR";
-
-const BixiLogo = ({ width = 120, bg = WHITE, style }) => (
+const NautilusLogo = ({ width = 120, bg = WHITE, style }) => (
   <img
-    src={bg === RED ? "/bixi-logo-white.png" : "/bixi-logo.png"}
-    alt="BIXI"
+    src={bg === WHITE ? "/nautilus-logo.svg" : "/nautilus-logo-white.svg"}
+    alt="Nautilus Plus"
     width={width}
     style={{ display: "block", height: "auto", ...style }}
   />
 );
 
-// Persistent logo at top of interior slides — red on light backgrounds, white on red
-const SlideTopLogo = ({ bg }) => <BixiLogo width={88} bg={bg} />;
+// Wraps only at spaces, so hyphenated names like "Bois-Franc" stay whole.
+const NoBreakWords = ({ text }) => text.split(" ").map((word, i) => (
+  <Fragment key={i}>
+    {i > 0 && " "}
+    <span style={{ whiteSpace: "nowrap" }}>{word}</span>
+  </Fragment>
+));
+
+// Persistent logo at top of interior slides
+const SlideTopLogo = ({ bg }) => <NautilusLogo width={68} bg={bg} />;
 
 // ---------------------------------------------------------------------------
 // Framer-driven entrance helpers — each registers its end time with the slide
@@ -519,73 +589,23 @@ const INTRO_TIMELINE = {
   headline: 0.1,
   wordStagger: 0.09,
   subtitle: 0.6,
-  sponsor: 0.95,
-  sponsorDuration: 0.6,
   hint: 1.6,
 };
 const INTRO_END_S = INTRO_GIFT.autoOpen + INTRO_GIFT.reveal + INTRO_TIMELINE.hint + 0.5;
+const INTRO_HEADLINE_SIZE = 46;
 
-const SponsorIntro = () => {
-  const reduced = useStill();
-  return (
-    <motion.div
-      initial={reduced ? false : { opacity: 0, scale: 0.6 }}
-      animate={{ opacity: [0, 1, 1], scale: [0.6, 1.08, 1] }}
-      transition={{
-        delay: INTRO_TIMELINE.sponsor,
-        duration: INTRO_TIMELINE.sponsorDuration,
-        times: [0, 0.6, 1],
-        ease: "easeOut",
-      }}
-      style={{ alignSelf: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}
-    >
-      <span style={{ fontFamily: BODY, fontSize: 11, fontWeight: 500, letterSpacing: 2, textTransform: "uppercase", color: "#888888", lineHeight: 1 }}>
-        Présenté par
-      </span>
-      <SponsorLogo size={30} color={BLACK} />
-    </motion.div>
-  );
-};
+const PROMO_CODE = "PROGRESSE2027";
 
-const sponsorInk = (bg) => (bg === WHITE ? BLACK : WHITE);
-
-// Fictional sponsor lockup: split-circle mark + geometric wordmark, monochrome.
-const SponsorLogo = ({ size = 12, color = BLACK }) => (
-  <span aria-label={SPONSOR} style={{ display: "inline-flex", alignItems: "center", gap: Math.round(size * 0.35), color, lineHeight: 1, whiteSpace: "nowrap" }}>
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} aria-hidden style={{ display: "block", flexShrink: 0 }}>
-      <path d="M18.57 3.17 A11 11 0 1 0 3.17 18.57 Z" />
-      <path d="M20.83 5.43 A11 11 0 0 1 5.43 20.83 Z" />
-    </svg>
-    <span aria-hidden style={{ fontFamily: BRAND, fontWeight: 700, fontSize: size, letterSpacing: "-0.02em", lineHeight: 1 }}>
-      {SPONSOR}
-    </span>
-  </span>
-);
-
-const SponsorHeaderCorner = ({ bg }) => {
-  const onLight = bg === WHITE;
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, whiteSpace: "nowrap", lineHeight: 1 }}>
-      <span style={{ fontFamily: BODY, fontSize: 10, color: onLight ? "#888888" : "rgba(255,255,255,0.7)", letterSpacing: 0.3 }}>
-        Présenté par
-      </span>
-      <SponsorLogo size={12} color={sponsorInk(bg)} />
-    </span>
-  );
-};
-
-const PROMO_CODE = "HIVER2027";
-
-const GIFT_RED_GRADIENT = "linear-gradient(145deg, #EE3124 0%, #C0392B 100%)";
+const GIFT_GRADIENT = `linear-gradient(145deg, ${BRAND_PRIMARY} 0%, ${BRAND_DEEP} 100%)`;
 const GiftBow = ({ width = 96 }) => (
   <svg width={width} height={Math.round((width * 68) / 96)} viewBox="0 0 96 68" fill="none" aria-hidden style={{ display: "block", overflow: "visible", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.22))" }}>
     <path d="M44 38 L30 64 L37 61 L41 67 L48 42 Z" fill="#F3F3F3" />
     <path d="M52 38 L66 64 L59 61 L55 67 L48 42 Z" fill="#F3F3F3" />
     <path d="M47 34 C36 12 10 6 8 22 C6 38 32 42 47 36 Z" fill={WHITE} />
     <path d="M49 34 C60 12 86 6 88 22 C90 38 64 42 49 36 Z" fill={WHITE} />
-    <path d="M44 33 C34 22 20 18 17 24" stroke="rgba(192,57,43,0.18)" strokeWidth="2" strokeLinecap="round" />
-    <path d="M52 33 C62 22 76 18 79 24" stroke="rgba(192,57,43,0.18)" strokeWidth="2" strokeLinecap="round" />
-    <rect x="40" y="27" width="16" height="15" rx="6" fill={WHITE} stroke="rgba(192,57,43,0.16)" strokeWidth="1.5" />
+    <path d="M44 33 C34 22 20 18 17 24" stroke={brandAlpha(0.18)} strokeWidth="2" strokeLinecap="round" />
+    <path d="M52 33 C62 22 76 18 79 24" stroke={brandAlpha(0.18)} strokeWidth="2" strokeLinecap="round" />
+    <rect x="40" y="27" width="16" height="15" rx="6" fill={WHITE} stroke={brandAlpha(0.16)} strokeWidth="1.5" />
   </svg>
 );
 
@@ -611,7 +631,7 @@ const ConfettiBurst = ({ delay = 0 }) => {
       h: 8 + Math.random() * 6,
       round: Math.random() < 0.3,
       spin: (Math.random() - 0.5) * 720,
-      red: i % 3 !== 0,
+      brand: i % 3 !== 0,
       lag: Math.random() * 0.12,
     };
   }), []);
@@ -637,8 +657,8 @@ const ConfettiBurst = ({ delay = 0 }) => {
             width: p.w,
             height: p.round ? p.w : p.h,
             borderRadius: p.round ? "50%" : 2,
-            background: p.red ? RED : WHITE,
-            boxShadow: p.red ? "none" : "0 0 0 1px rgba(238,49,36,0.35), 0 1px 3px rgba(0,0,0,0.12)",
+            background: p.brand ? BRAND_PRIMARY : WHITE,
+            boxShadow: p.brand ? "none" : `0 0 0 1px ${brandAlpha(0.35)}, 0 1px 3px rgba(0,0,0,0.12)`,
           }}
         />
       ))}
@@ -656,9 +676,9 @@ const MERCI_RIBBON = "rgba(255,255,255,0.9)";
 const MERCI_BOW_W = 100;
 const MERCI_BOW_H = Math.round((MERCI_BOW_W * 68) / 96);
 const MERCI_GRAY = "#666666";
-// Slide content starts 36px from the top and the header ends ~52px down: the headline sits
+// Slide content starts 36px from the top and the header ends ~64px down: the headline sits
 // 40px under the header while wrapped, 20px once opened.
-const MERCI_HEADER_BOTTOM = 52 - 36;
+const MERCI_HEADER_BOTTOM = 64 - 36;
 const MERCI_HEADLINE_GAP = { closed: 40, open: 20 };
 
 const MerciGift = ({ opened, onOpen, onShare }) => {
@@ -699,7 +719,7 @@ const MerciGift = ({ opened, onOpen, onShare }) => {
             whiteSpace: opened ? "nowrap" : "normal",
           }}
         >
-          {opened ? "Profitez-en, Bixiste!" : "Un petit merci, Bixiste"}
+          {opened ? "Profites-en!" : "Un petit merci, champion·ne"}
         </motion.div>
       </AnimatePresence>
 
@@ -731,7 +751,7 @@ const MerciGift = ({ opened, onOpen, onShare }) => {
               WebkitTapHighlightColor: "transparent",
             }}
           >
-            {/* One card: red while wrapped, grows in height to reveal the offer */}
+            {/* One card: brand color while wrapped, grows in height to reveal the offer */}
             <motion.div
               initial={false}
               animate={{ height: opened ? "auto" : MERCI_GIFT_H }}
@@ -740,8 +760,8 @@ const MerciGift = ({ opened, onOpen, onShare }) => {
                 position: "relative",
                 borderRadius: MERCI_CARD_RADIUS,
                 overflow: "hidden",
-                background: RED,
-                boxShadow: "0 16px 32px rgba(238,49,36,0.25)",
+                background: BRAND_PRIMARY,
+                boxShadow: `0 16px 32px ${brandAlpha(0.25)}`,
                 textAlign: "left",
               }}
             >
@@ -825,7 +845,7 @@ const MerciGift = ({ opened, onOpen, onShare }) => {
             >
               <span style={{ display: "flex", alignItems: "center", gap: 8, animation: "hintPulse 1.8s ease-in-out 1s infinite" }}>
                 <TapIcon />
-                <span style={{ fontFamily: BODY, fontSize: 16, color: MERCI_GRAY, lineHeight: 1 }}>Appuyez pour ouvrir</span>
+                <span style={{ fontFamily: CONDENSED, fontWeight: 400, fontSize: 14, letterSpacing: 1.2, textTransform: "uppercase", color: MERCI_GRAY, lineHeight: 1 }}>Appuie pour ouvrir</span>
               </span>
             </motion.div>
           ) : (
@@ -840,11 +860,11 @@ const MerciGift = ({ opened, onOpen, onShare }) => {
                 style={{
                   width: "100%",
                   height: 48,
-                  background: RED,
+                  background: BRAND_PRIMARY,
                   color: WHITE,
                   border: "none",
                   borderRadius: 14,
-                  fontFamily: HEAD,
+                  fontFamily: CONDENSED,
                   fontWeight: 700,
                   fontSize: 16,
                   letterSpacing: 0.2,
@@ -868,7 +888,7 @@ const MerciGift = ({ opened, onOpen, onShare }) => {
           transition={{ delay: at(UNWRAP.cta), duration: at(0.4), ease: STORY_EASE }}
         >
           <FadeUp delay={0.6} y={8} style={{ fontFamily: BODY, fontSize: 15, lineHeight: 1.4, color: MERCI_GRAY }}>
-            Merci de faire partie de la communauté BIXI.
+            Merci de faire partie de la communauté Nautilus Plus.
           </FadeUp>
         </motion.div>
       </motion.div>
@@ -878,14 +898,39 @@ const MerciGift = ({ opened, onOpen, onShare }) => {
 
 const MERCI_CARD_RADIUS = 24;
 const MERCI_BANNER_H = 56;
+const MERCI_PHOTO_BANNER_H = 88;
 const MERCI_OFFER_PAD = 20;
 
-const SnowflakeIcon = ({ size = 28 }) => (
-  <svg aria-hidden width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={WHITE} strokeWidth="2" strokeLinecap="round" style={{ display: "block", flexShrink: 0 }}>
-    <path d="M12 2v20M3.34 7l17.32 10M3.34 17 20.66 7" />
-    <path d="M9.53 4.03 12 6.5l2.47-2.47M17.67 5.87l-.91 3.38 3.38.91M20.14 13.84l-3.38.91.91 3.38M14.47 19.97 12 17.5l-2.47 2.47M6.33 18.13l.91-3.38-3.38-.91M3.86 10.16l3.38-.91-.91-3.38" strokeLinejoin="round" />
-  </svg>
-);
+// Gym photo banner; falls back to the small icon banner if the photo can't load.
+const MerciBanner = () => {
+  const [photoFailed, setPhotoFailed] = useState(false);
+  if (!photoFailed) {
+    return (
+      <img
+        src={GYM_PHOTO_URL}
+        alt=""
+        decoding="async"
+        onError={() => setPhotoFailed(true)}
+        style={{ display: "block", width: "100%", height: MERCI_PHOTO_BANNER_H, objectFit: "cover" }}
+      />
+    );
+  }
+  return (
+    <div style={{
+      height: MERCI_BANNER_H,
+      background: "rgba(0,0,0,0.12)",
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      padding: `0 ${MERCI_OFFER_PAD}px`,
+    }}>
+      <DumbbellIcon size={28} />
+      <span style={{ fontFamily: CONDENSED, fontWeight: 700, fontSize: 15, letterSpacing: 1, textTransform: "uppercase", lineHeight: 1 }}>
+        Entraînement personnalisé
+      </span>
+    </div>
+  );
+};
 
 // Revealed offer; the gift card around it provides the rounded corners and shadow.
 const MerciOffer = () => {
@@ -903,37 +948,25 @@ const MerciOffer = () => {
   };
 
   return (
-    <div style={{ width: "100%", textAlign: "left", color: WHITE, background: GIFT_RED_GRADIENT }}>
-      <div style={{
-        height: MERCI_BANNER_H,
-        background: "rgba(0,0,0,0.12)",
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: `0 ${MERCI_OFFER_PAD}px`,
-      }}>
-        <SnowflakeIcon size={28} />
-        <span style={{ fontFamily: HEAD, fontWeight: 800, fontSize: 14, letterSpacing: 1, textTransform: "uppercase", lineHeight: 1 }}>
-          BIXI d'hiver
-        </span>
-      </div>
+    <div style={{ width: "100%", textAlign: "left", color: WHITE, background: GIFT_GRADIENT }}>
+      <MerciBanner />
       <div style={{ padding: MERCI_OFFER_PAD, display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={{ fontFamily: HEAD, fontWeight: 800, fontSize: 22, lineHeight: 1.1, letterSpacing: "-0.01em" }}>
-          10% sur votre abonnement hivernal
+        <div style={{ fontFamily: DISPLAY, fontWeight: 900, fontSize: 22, lineHeight: 1.1, letterSpacing: "-0.01em" }}>
+          Une séance d'entraînement personnalisé offerte
         </div>
         <div style={{ fontFamily: BODY, fontSize: 15, lineHeight: 1.35 }}>
-          On se retrouve sous la neige?
+          Parce que tes efforts méritent d'être récompensés.
         </div>
         <div style={{ fontFamily: BODY, fontSize: 13, lineHeight: 1.35, color: "rgba(255,255,255,0.75)" }}>
-          Offre valable jusqu'au 28 février 2027.
+          Valide jusqu'au 31 mars 2027.
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{
             background: "rgba(0,0,0,0.2)",
             borderRadius: 12,
             padding: "10px 16px",
-            fontFamily: HEAD,
-            fontWeight: 800,
+            fontFamily: CONDENSED,
+            fontWeight: 700,
             fontSize: 16,
             letterSpacing: 2,
             lineHeight: 1,
@@ -948,12 +981,12 @@ const MerciOffer = () => {
               position: "relative",
               zIndex: 30,
               background: WHITE,
-              color: RED,
+              color: BRAND_PRIMARY,
               border: "none",
               borderRadius: 12,
               padding: "10px 16px",
-              fontFamily: HEAD,
-              fontWeight: 800,
+              fontFamily: CONDENSED,
+              fontWeight: 700,
               fontSize: 15,
               lineHeight: 1,
               minWidth: 84,
@@ -983,9 +1016,9 @@ const Spinner = ({ size = 20 }) => (
 
 const PartagerButton = ({ onClick, loading }) => (
   <button type="button" disabled={loading} onClick={onClick} style={{
-    width: "100%", height: JOIN_STRIP_H, background: WHITE, color: RED,
+    width: "100%", height: JOIN_STRIP_H, background: WHITE, color: BRAND_PRIMARY,
     border: "none", borderRadius: 14, padding: "0 16px",
-    fontFamily: HEAD, fontWeight: 700, fontSize: 16, letterSpacing: 0.2,
+    fontFamily: CONDENSED, fontWeight: 700, fontSize: 16, letterSpacing: 0.2,
     display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
     flexShrink: 0,
   }}>
@@ -1004,10 +1037,10 @@ const SlideShareButton = ({ bg, onClick, loading }) => {
       padding: "0 14px",
       borderRadius: 999,
       border: "none",
-      background: onLight ? "rgba(10,10,10,0.06)" : bg === RED ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.14)",
+      background: onLight ? "rgba(10,10,10,0.06)" : bg === BRAND_PRIMARY ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.14)",
       color: onLight ? BLACK : WHITE,
-      fontFamily: HEAD,
-      fontWeight: 700,
+      fontFamily: CONDENSED,
+      fontWeight: 400,
       fontSize: 13,
       letterSpacing: 0.2,
       display: "flex",
@@ -1022,26 +1055,27 @@ const SlideShareButton = ({ bg, onClick, loading }) => {
 
 // Replaces the share button in exported images.
 const JoinStrip = ({ bg = WHITE }) => {
-  const onRed = bg === RED;
+  const onBrand = bg === BRAND_PRIMARY;
   return (
     <div style={{
       width: "100%",
       height: JOIN_STRIP_H,
       borderRadius: 14,
-      background: onRed ? WHITE : RED,
-      color: onRed ? BLACK : WHITE,
+      background: onBrand ? WHITE : BRAND_PRIMARY,
+      color: onBrand ? BLACK : WHITE,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      gap: 5,
-      fontFamily: HEAD,
-      fontWeight: 600,
+      gap: 4,
+      fontFamily: CONDENSED,
+      fontWeight: 400,
       fontSize: 14,
       whiteSpace: "nowrap",
       flexShrink: 0,
     }}>
-      Rejoignez BIXI avec le code
-      <span style={{ fontWeight: 900, letterSpacing: 0.6, color: onRed ? RED : WHITE }}>{JOIN_CODE}</span>
+      Rejoins le
+      <span style={{ fontWeight: 700, color: onBrand ? BRAND_PRIMARY : WHITE }}>Mouvement Progresse</span>
+      avec Nautilus Plus
     </div>
   );
 };
@@ -1053,25 +1087,23 @@ const ShareClosingStrip = () => (
     height: JOIN_STRIP_H,
     borderRadius: 14,
     background: WHITE,
-    color: RED,
+    color: BRAND_PRIMARY,
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
-    fontFamily: HEAD,
+    fontFamily: CONDENSED,
     lineHeight: 1.2,
     whiteSpace: "nowrap",
     flexShrink: 0,
   }}>
-    <span style={{ fontWeight: 800, fontSize: 14 }}>À la prochaine saison, Bixiste!</span>
-    <span style={{ fontWeight: 600, fontSize: 12 }}>
-      Code <span style={{ fontWeight: 900, letterSpacing: 0.6 }}>{JOIN_CODE}</span>
-    </span>
+    <span style={{ fontWeight: 700, fontSize: 15 }}>Rejoins le Mouvement Progresse</span>
+    <span style={{ fontWeight: 400, fontSize: 12 }}>avec Nautilus Plus</span>
   </div>
 );
 
-// Recap card pieces — white on the red card.
+// Recap card pieces — white on the brand-color card.
 const RecapTile = ({ value, unit, label }) => (
   <div style={{
     background: "rgba(255,255,255,0.15)",
@@ -1080,33 +1112,34 @@ const RecapTile = ({ value, unit, label }) => (
     padding: 14,
     minWidth: 0,
   }}>
-    <div style={{ fontFamily: HEAD, fontWeight: 800, fontSize: 28, lineHeight: 1, color: WHITE, whiteSpace: "nowrap" }}>
+    <div style={{ fontFamily: DISPLAY, fontWeight: 900, fontSize: 28, lineHeight: 1, color: WHITE, whiteSpace: "nowrap" }}>
       {value}
       {unit && <span style={{ fontSize: 18, marginLeft: 3 }}>{unit}</span>}
     </div>
-    <div style={{ fontFamily: BODY, fontSize: 11, lineHeight: 1.2, letterSpacing: 1, textTransform: "uppercase", color: "rgba(255,255,255,0.75)", marginTop: 6 }}>
+    <div style={{ fontFamily: CONDENSED, fontWeight: 400, fontSize: 12, lineHeight: 1.2, letterSpacing: 1, textTransform: "uppercase", color: "rgba(255,255,255,0.75)", marginTop: 6 }}>
       {label}
     </div>
   </div>
 );
 
-const RecapStationRow = ({ station }) => (
+const RecapGymRow = ({ gym }) => (
   <div style={{ display: "flex", alignItems: "center", gap: 14, background: "rgba(0,0,0,0.12)", borderRadius: 14, padding: 12 }}>
     <div style={{
       width: 64,
       height: 64,
       borderRadius: 10,
       flexShrink: 0,
-      backgroundImage: `url(${STATION_PHOTO_URL})`,
+      backgroundColor: "rgba(255,255,255,0.15)",
+      backgroundImage: `url(${GYM_PHOTO_URL})`,
       backgroundSize: "cover",
-      backgroundPosition: "center bottom",
+      backgroundPosition: "center",
     }} />
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontFamily: BODY, fontSize: 11, lineHeight: 1.2, letterSpacing: 1, textTransform: "uppercase", color: "rgba(255,255,255,0.7)" }}>
-        Station préférée
+      <div style={{ fontFamily: CONDENSED, fontWeight: 400, fontSize: 12, lineHeight: 1.2, letterSpacing: 1, textTransform: "uppercase", color: "rgba(255,255,255,0.7)" }}>
+        Gym préféré
       </div>
-      <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 17, lineHeight: 1.2, color: WHITE, marginTop: 4 }}>
-        {station}
+      <div style={{ fontFamily: DISPLAY, fontWeight: 900, fontSize: 17, lineHeight: 1.2, color: WHITE, marginTop: 4 }}>
+        <NoBreakWords text={gym} />
       </div>
     </div>
   </div>
@@ -1115,31 +1148,21 @@ const RecapStationRow = ({ station }) => (
 // Slide stat typography — label tightly coupled to hero number
 const StatContextLabel = ({ children, dark, accent, style }) => (
   <div style={{
-    fontFamily: HEAD,
-    fontWeight: 800,
-    fontSize: 13,
+    fontFamily: CONDENSED,
+    fontWeight: 700,
+    fontSize: 14,
     letterSpacing: 1.6,
     textTransform: "uppercase",
     lineHeight: 1.2,
-    color: accent ? RED : (dark ? "rgba(255,255,255,0.72)" : "rgba(10,10,10,0.55)"),
+    color: accent ? BRAND_PRIMARY : (dark ? "rgba(255,255,255,0.72)" : "rgba(10,10,10,0.55)"),
     marginBottom: 12,
     ...style,
   }}>{children}</div>
 );
 
-// Big-number type: tight, heavy, slightly negative tracking.
-const heroNumber = (size, color) => ({
-  fontFamily: HEAD,
-  fontWeight: 800,
-  fontSize: size,
-  color,
-  lineHeight: 0.8,
-  letterSpacing: "-0.045em",
-});
-
 const headline = (size, color) => ({
-  fontFamily: HEAD,
-  fontWeight: 800,
+  fontFamily: DISPLAY,
+  fontWeight: 900,
   fontSize: size,
   color,
   lineHeight: 0.95,
@@ -1151,33 +1174,28 @@ const SlideTopSpacer = () => <div style={{ height: 48, flexShrink: 0 }} />;
 // Quick top-to-bottom stagger for the share card sections.
 const shareStep = (i) => ({ delay: 0.08 + i * 0.07, duration: 0.4, y: 12 });
 
-// Bars grow left to right; the highlighted month grows last.
+// Bars grow left to right; the highlighted bar grows last.
 const BAR_START_S = ENTRANCE_END_S;
-const BAR_STAGGER_S = 0.08;
 const BAR_GROW_S = 0.4;
 const BAR_HIGHLIGHT_GROW_S = 0.55;
-const barOrder = (() => {
-  const others = SEASON_BARS.filter((b) => !b.highlight).map((b) => b.month);
-  const highlighted = SEASON_BARS.filter((b) => b.highlight).map((b) => b.month);
-  return [...others, ...highlighted];
-})();
-const barDelay = (month) => {
-  const i = barOrder.indexOf(month);
-  const isHighlight = i === barOrder.length - 1;
-  return BAR_START_S + i * BAR_STAGGER_S + (isHighlight ? 0.1 : 0);
+const barTimeline = (bars, stagger) => {
+  const order = [...bars.filter((b) => !b.highlight), ...bars.filter((b) => b.highlight)];
+  const delay = (bar) => BAR_START_S + order.indexOf(bar) * stagger + (bar.highlight ? 0.1 : 0);
+  return { delay, end: delay(order[order.length - 1]) + BAR_HIGHLIGHT_GROW_S };
 };
-const SEASON_CHART_END_S = barDelay(barOrder[barOrder.length - 1]) + BAR_HIGHLIGHT_GROW_S;
 
-const SeasonBarChart = ({ style }) => {
+const BarChart = ({ bars, stagger = 0.08, gap = 3, barColor, highlightColor, labelColor, style }) => {
   const reduced = useStill();
-  useSlideAnimationMs(SEASON_CHART_END_S * 1000, !reduced);
+  const { delay, end } = useMemo(() => barTimeline(bars, stagger), [bars, stagger]);
+  useSlideAnimationMs(end * 1000, !reduced);
+  const max = Math.max(...bars.map((b) => b.value));
   const barMaxHeight = 88;
   return (
     <div style={{ width: "100%", height: 120, ...style }}>
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 3, height: "100%" }}>
-        {SEASON_BARS.map(({ month, value, highlight }) => (
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap, height: "100%" }}>
+        {bars.map((bar, i) => (
           <div
-            key={month}
+            key={i}
             style={{
               flex: 1,
               minWidth: 0,
@@ -1190,18 +1208,18 @@ const SeasonBarChart = ({ style }) => {
           >
             <motion.div
               initial={reduced ? false : { scaleY: 0 }}
-              animate={{ scaleY: highlight ? [0, 1.08, 1] : 1 }}
+              animate={{ scaleY: bar.highlight ? [0, 1.08, 1] : 1 }}
               transition={{
-                delay: barDelay(month),
-                duration: highlight ? BAR_HIGHLIGHT_GROW_S : BAR_GROW_S,
-                ease: highlight ? "easeOut" : STORY_EASE,
-                ...(highlight ? { times: [0, 0.7, 1] } : {}),
+                delay: delay(bar),
+                duration: bar.highlight ? BAR_HIGHLIGHT_GROW_S : BAR_GROW_S,
+                ease: bar.highlight ? "easeOut" : STORY_EASE,
+                ...(bar.highlight ? { times: [0, 0.7, 1] } : {}),
               }}
               style={{
                 width: "100%",
                 maxWidth: 28,
-                height: Math.max(4, (value / SEASON_BAR_MAX) * barMaxHeight),
-                background: highlight ? RED : "rgba(255,255,255,0.25)",
+                height: Math.max(4, (bar.value / max) * barMaxHeight),
+                background: bar.highlight ? highlightColor : barColor,
                 borderRadius: "3px 3px 0 0",
                 flexShrink: 0,
                 transformOrigin: "bottom center",
@@ -1210,11 +1228,12 @@ const SeasonBarChart = ({ style }) => {
             <motion.span
               initial={reduced ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ delay: barDelay(month), duration: BAR_GROW_S }}
+              transition={{ delay: delay(bar), duration: BAR_GROW_S }}
               style={{
-                fontFamily: BODY,
-                fontSize: 9,
-                color: WHITE,
+                fontFamily: CONDENSED,
+                fontWeight: 400,
+                fontSize: 10,
+                color: labelColor,
                 textTransform: "uppercase",
                 marginTop: 6,
                 letterSpacing: 0.2,
@@ -1222,7 +1241,7 @@ const SeasonBarChart = ({ style }) => {
                 whiteSpace: "nowrap",
               }}
             >
-              {month}
+              {bar.label || "\u00A0"}
             </motion.span>
           </div>
         ))}
@@ -1231,138 +1250,37 @@ const SeasonBarChart = ({ style }) => {
   );
 };
 
-// Donut: electric share draws in blue, the rest stays a faint white track. Ride count,
-// arc and center percentage all follow one count-up progress.
-const DONUT_SIZE = 156;
-const DONUT_STROKE = 18;
-const DONUT_TRACK = "rgba(255,255,255,0.12)";
-
-const DonutLegendRow = ({ swatch, label, value }) => (
-  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-    <span style={{ width: 10, height: 10, borderRadius: 3, background: swatch, flexShrink: 0 }} />
-    <span style={{ fontFamily: BODY, fontSize: 13, color: "rgba(255,255,255,0.7)", flex: 1 }}>{label}</span>
-    <span style={{ fontFamily: HEAD, fontWeight: 800, fontSize: 20, color: WHITE, fontVariantNumeric: "tabular-nums" }}>{value}</span>
-  </div>
-);
-
-const ElectricDonutHero = ({ electric, total, pct }) => {
-  const { value, progress } = useCountUp(electric);
-  const r = (DONUT_SIZE - DONUT_STROKE) / 2;
-  const c = DONUT_SIZE / 2;
-  const arc = pct * progress;
-  return (
-    <>
-      <DataNumber value={value} end={electric} color={DATA_TONES.electric.number} />
-      <DataVisual>
-        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <div style={{ position: "relative", width: DONUT_SIZE, height: DONUT_SIZE, flexShrink: 0 }}>
-            <div style={{
-              position: "absolute",
-              inset: -50,
-              borderRadius: "50%",
-              background: "radial-gradient(circle, rgba(31,91,214,0.38) 0%, rgba(31,91,214,0.12) 45%, transparent 70%)",
-              pointerEvents: "none",
-            }} />
-            <svg width={DONUT_SIZE} height={DONUT_SIZE} viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`} style={{ display: "block", position: "relative" }}>
-              <circle cx={c} cy={c} r={r} fill="none" stroke={DONUT_TRACK} strokeWidth={DONUT_STROKE} />
-              <circle
-                cx={c}
-                cy={c}
-                r={r}
-                fill="none"
-                stroke={ELECTRIC_BLUE}
-                strokeWidth={DONUT_STROKE}
-                pathLength="100"
-                strokeDasharray={`${arc} 100`}
-                transform={`rotate(-90 ${c} ${c})`}
-              />
-            </svg>
-            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" style={{ display: "block", marginBottom: 4 }}>
-                <path d={BOLT_PATH} fill={ELECTRIC_BLUE} strokeLinejoin="round" />
-              </svg>
-              <div style={{ ...heroNumber(40, ELECTRIC_BLUE), lineHeight: 1, display: "flex", alignItems: "flex-start" }}>
-                <AnimatedNumber value={Math.round(pct * progress)} end={pct} style={{ textAlign: "right" }} />
-                <span style={{ fontSize: 22, marginTop: 3, marginLeft: 1 }}>%</span>
-              </div>
-            </div>
-          </div>
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 14 }}>
-            <DonutLegendRow swatch={ELECTRIC_BLUE} label="Électrique" value={electric} />
-            <DonutLegendRow swatch="rgba(255,255,255,0.25)" label="Classique" value={total - electric} />
-          </div>
-        </div>
-      </DataVisual>
-    </>
-  );
-};
-
-// Flat white trees, one per tree-equivalent; each pops in as the kg count passes its share.
-const TREE_W = 48;
-const TREE_H = 60;
-
-const Co2TreesHero = ({ kg, trees }) => {
-  const reduced = useStill();
-  const { value, progress } = useCountUp(kg);
-  return (
-    <>
-      <DataNumber value={value} end={kg} unit="KG" color={DATA_TONES.red.number} />
-      <DataVisual>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
-          {Array.from({ length: trees }, (_, i) => {
-            const shown = progress >= (i + 0.5) / trees;
-            return (
-              <motion.svg
-                key={i}
-                width={TREE_W}
-                height={TREE_H}
-                viewBox="0 0 48 60"
-                initial={reduced ? false : { scale: 0, opacity: 0 }}
-                animate={shown ? { scale: 1, opacity: 1 } : { scale: 0, opacity: 0 }}
-                transition={{ type: "spring", stiffness: 420, damping: 18 }}
-                style={{ display: "block", transformOrigin: "50% 100%" }}
-              >
-                <rect x="21" y="36" width="6" height="24" rx="2" fill={WHITE} />
-                <circle cx="24" cy="22" r="20" fill={WHITE} />
-              </motion.svg>
-            );
-          })}
-        </div>
-      </DataVisual>
-    </>
-  );
-};
-
-const STATION_PHOTO_IN_S = 0.55;
+// ---------------------------------------------------------------------------
+// Favorite gym photo
+// ---------------------------------------------------------------------------
+const GYM_PHOTO_IN_S = 0.55;
 const PIN_DROP_S = 1.2;
 const PIN_DROP_DURATION_S = 0.75;
 
-const StationPhotoCard = ({ height = 320, style }) => {
+// Background image rather than <img>: html2canvas ignores object-fit but honors background-size.
+const GymPhotoCard = ({ style }) => {
   const reduced = useStill();
   useSlideAnimationMs((PIN_DROP_S + PIN_DROP_DURATION_S) * 1000, !reduced);
   const pinDrop = { delay: PIN_DROP_S, duration: PIN_DROP_DURATION_S, times: [0, 0.55, 0.78, 1], ease: "easeOut" };
   return (
     <motion.div
+      role="img"
+      aria-label={RECAP.favoriteGym}
       initial={reduced ? false : { opacity: 0, scale: 1.02 }}
       animate={{ opacity: 1, scale: 1 }}
-      transition={{ delay: STATION_PHOTO_IN_S, duration: 0.6, ease: STORY_EASE }}
+      transition={{ delay: GYM_PHOTO_IN_S, duration: 0.6, ease: STORY_EASE }}
       style={{
         position: "relative",
-        height,
         borderRadius: 20,
         overflow: "hidden",
-        border: `1px solid ${BORDER}`,
+        backgroundColor: "#EEEEEE",
+        backgroundImage: `url(${GYM_PHOTO_URL})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
         ...style,
       }}
     >
-      <img
-        crossOrigin="anonymous"
-        src={STATION_PHOTO_URL}
-        alt=""
-        decoding="async"
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center bottom", display: "block" }}
-      />
-      <div aria-hidden style={{ position: "absolute", left: "50%", top: "52%", transform: "translate(-50%, -50%)" }}>
+      <div aria-hidden style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}>
         <motion.div
           initial={reduced ? false : { scale: 0.3, opacity: 0 }}
           animate={{ scale: [0.3, 1, 0.8, 1], opacity: [0, 0.9, 0.9, 1] }}
@@ -1370,7 +1288,7 @@ const StationPhotoCard = ({ height = 320, style }) => {
           style={{ width: 28, height: 8, borderRadius: "50%", background: "rgba(0,0,0,0.35)", filter: "blur(1px)" }}
         />
       </div>
-      <div aria-hidden style={{ position: "absolute", left: "50%", top: "52%", transform: "translate(-50%, -100%)" }}>
+      <div aria-hidden style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -100%)" }}>
         <motion.div
           initial={reduced ? false : { y: -170, opacity: 0 }}
           animate={{ y: [-170, 0, -16, 0], opacity: [0, 1, 1, 1] }}
@@ -1381,15 +1299,15 @@ const StationPhotoCard = ({ height = 320, style }) => {
             width: 44,
             height: 44,
             borderRadius: "50%",
-            background: RED,
+            background: BRAND_PRIMARY,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             boxShadow: "0 6px 18px rgba(0,0,0,0.3), 0 0 0 3px rgba(255,255,255,0.95)",
           }}>
-            <BikeIcon size={24} color={WHITE} />
+            <DumbbellIcon size={24} color={WHITE} />
           </div>
-          <div style={{ width: 0, height: 0, borderLeft: "7px solid transparent", borderRight: "7px solid transparent", borderTop: `10px solid ${RED}`, marginTop: 1 }} />
+          <div style={{ width: 0, height: 0, borderLeft: "7px solid transparent", borderRight: "7px solid transparent", borderTop: `10px solid ${BRAND_PRIMARY}`, marginTop: 1 }} />
         </motion.div>
       </div>
     </motion.div>
@@ -1399,7 +1317,7 @@ const StationPhotoCard = ({ height = 320, style }) => {
 // Persona hero card choreography (seconds): card, icon, name, description, trait pills.
 const PERSONA_TITLE = { delay: 0.65, stagger: 0.035, duration: 0.4 };
 const PERSONA_TITLE_END_S = PERSONA_TITLE.delay
-  + PERSONA_TITLE.stagger * (PROFILE.title.replace(/\s/g, "").length - 1)
+  + PERSONA_TITLE.stagger * (PERSONA.title.replace(/\s/g, "").length - 1)
   + PERSONA_TITLE.duration;
 const PERSONA_CARD = {
   card: 0.05,
@@ -1409,23 +1327,38 @@ const PERSONA_CARD = {
   pillStagger: 0.12,
 };
 
-// "Daily routine" mark: a bold BIXI bike inside a ~300° repeat arrow (viewBox 110, center 55).
-// The arc's gap sits at the top; the arrowhead at its end points clockwise into the gap.
-const ROUTINE_ARC = "M77 16.9 A44 44 0 1 1 33 16.9";
-const ROUTINE_ARROWHEAD = "M41.5 12 L29 10.3 L36.8 23.8 Z";
-const ROUTINE_ICON = {
+// "Early riser" mark: a sun rising over the horizon, rays drawing in, a dumbbell sliding
+// in underneath (viewBox 110, center 55).
+const SUNRISE = { cx: 55, cy: 56, r: 17 };
+const SUNRISE_RAYS = [160, 125, 90, 55, 20].map((deg) => {
+  const a = (deg * Math.PI) / 180;
+  return {
+    x1: SUNRISE.cx + Math.cos(a) * 23,
+    y1: SUNRISE.cy - Math.sin(a) * 23,
+    x2: SUNRISE.cx + Math.cos(a) * 30,
+    y2: SUNRISE.cy - Math.sin(a) * 30,
+  };
+});
+const SUNRISE_ICON = {
   circle: PERSONA_CARD.icon - 0.1,
-  arc: PERSONA_CARD.icon,
-  arcDuration: 0.8,
-  bike: PERSONA_CARD.icon + 0.1,
-  bikeDuration: 0.7,
-  spinDuration: 2.2,
+  horizon: PERSONA_CARD.icon,
+  sun: PERSONA_CARD.icon + 0.1,
+  sunDuration: 0.6,
+  rays: PERSONA_CARD.icon + 0.55,
+  rayStagger: 0.08,
+  rayDuration: 0.3,
+  dumbbell: PERSONA_CARD.icon + 0.35,
+  dumbbellDuration: 0.7,
 };
-ROUTINE_ICON.spin = ROUTINE_ICON.arc + ROUTINE_ICON.arcDuration + 0.2;
+const SUNRISE_ICON_END_S = Math.max(
+  SUNRISE_ICON.rays + SUNRISE_ICON.rayStagger * (SUNRISE_RAYS.length - 1) + SUNRISE_ICON.rayDuration,
+  SUNRISE_ICON.dumbbell + SUNRISE_ICON.dumbbellDuration,
+);
 
 const PersonaIcon = () => {
   const reduced = useStill();
-  useSlideAnimationMs((ROUTINE_ICON.spin + ROUTINE_ICON.spinDuration) * 1000, !reduced);
+  useSlideAnimationMs(SUNRISE_ICON_END_S * 1000, !reduced);
+  const { cx, cy, r } = SUNRISE;
   return (
     <svg aria-hidden width="110" height="110" viewBox="0 0 110 110" fill="none" style={{ display: "block", overflow: "visible" }}>
       <motion.circle
@@ -1436,53 +1369,51 @@ const PersonaIcon = () => {
         fillOpacity="0.15"
         initial={reduced ? false : { scale: 0.6, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        transition={{ delay: ROUTINE_ICON.circle, duration: 0.45, ease: STORY_EASE }}
+        transition={{ delay: SUNRISE_ICON.circle, duration: 0.45, ease: STORY_EASE }}
+      />
+
+      <motion.path
+        d={`M${cx - r} ${cy} A${r} ${r} 0 0 1 ${cx + r} ${cy} Z`}
+        fill={WHITE}
+        initial={reduced ? false : { y: 14, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ delay: SUNRISE_ICON.sun, duration: SUNRISE_ICON.sunDuration, ease: STORY_EASE }}
+      />
+
+      {SUNRISE_RAYS.map((ray, i) => (
+        <motion.path
+          key={i}
+          d={`M${ray.x1} ${ray.y1} L${ray.x2} ${ray.y2}`}
+          stroke={WHITE}
+          strokeWidth="4.5"
+          strokeLinecap="round"
+          initial={reduced ? false : { pathLength: 0, opacity: 0 }}
+          animate={{ pathLength: 1, opacity: 1 }}
+          transition={{ delay: SUNRISE_ICON.rays + i * SUNRISE_ICON.rayStagger, duration: SUNRISE_ICON.rayDuration, ease: "easeOut" }}
+        />
+      ))}
+
+      <motion.path
+        d={`M26 ${cy + 5} H84`}
+        stroke={WHITE}
+        strokeWidth="5"
+        strokeLinecap="round"
+        initial={reduced ? false : { pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ delay: SUNRISE_ICON.horizon, duration: 0.5, ease: "easeInOut" }}
       />
 
       <motion.g
-        initial={reduced ? false : { rotate: 0 }}
-        animate={{ rotate: 360 }}
-        transition={{ delay: ROUTINE_ICON.spin, duration: ROUTINE_ICON.spinDuration, ease: "easeInOut" }}
-      >
-        {/* Invisible full circle keeps the group's box centered on 55,55 for the spin */}
-        <circle cx="55" cy="55" r="48" />
-        <motion.path
-          d={ROUTINE_ARC}
-          stroke={WHITE}
-          strokeWidth="7"
-          strokeLinecap="round"
-          initial={reduced ? false : { pathLength: 0 }}
-          animate={{ pathLength: 1 }}
-          transition={{ delay: ROUTINE_ICON.arc, duration: ROUTINE_ICON.arcDuration, ease: "easeInOut" }}
-        />
-        <motion.path
-          d={ROUTINE_ARROWHEAD}
-          fill={WHITE}
-          stroke={WHITE}
-          strokeWidth="2"
-          strokeLinejoin="round"
-          initial={reduced ? false : { scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ delay: ROUTINE_ICON.arc + ROUTINE_ICON.arcDuration - 0.1, duration: 0.25, ease: "easeOut" }}
-        />
-      </motion.g>
-
-      <motion.g
+        fill={WHITE}
         initial={reduced ? false : { x: -48, opacity: 0 }}
         animate={{ x: [-48, 5, -2, 0], opacity: [0, 1, 1, 1] }}
-        transition={{ delay: ROUTINE_ICON.bike, duration: ROUTINE_ICON.bikeDuration, times: [0, 0.6, 0.82, 1], ease: "easeOut" }}
+        transition={{ delay: SUNRISE_ICON.dumbbell, duration: SUNRISE_ICON.dumbbellDuration, times: [0, 0.6, 0.82, 1], ease: "easeOut" }}
       >
-        <g transform="translate(0 -3)" stroke={WHITE} strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="36" cy="68" r="10" strokeWidth="6" />
-          <circle cx="74" cy="68" r="10" strokeWidth="6" />
-          <circle cx="36" cy="68" r="2.5" fill={WHITE} strokeWidth="0" />
-          <circle cx="74" cy="68" r="2.5" fill={WHITE} strokeWidth="0" />
-          <path d="M36 68 L52 66 M36 68 Q47 69 52 66 L67 44 M47 49 L52 66 M67 44 L74 68" strokeWidth="6" />
-          <path d="M67 44 L65 37 L58 36" strokeWidth="5" />
-          <rect x="40" y="44" width="13" height="6" rx="3" fill={WHITE} strokeWidth="0" />
-          <rect x="69" y="37" width="17" height="12" rx="2.5" fill={WHITE} strokeWidth="0" />
-          <path d="M74.5 40 V46 M80.5 40 V46" stroke={RED} strokeWidth="1.6" />
-        </g>
+        <rect x="30" y="70" width="5" height="12" rx="1.5" />
+        <rect x="35" y="67" width="6" height="18" rx="2" />
+        <rect x="41" y="74" width="28" height="4" rx="2" />
+        <rect x="69" y="67" width="6" height="18" rx="2" />
+        <rect x="75" y="70" width="5" height="12" rx="1.5" />
       </motion.g>
     </svg>
   );
@@ -1505,9 +1436,9 @@ const PersonaTraitPill = ({ children, delay }) => {
         background: "rgba(255,255,255,0.18)",
         border: "1px solid rgba(255,255,255,0.35)",
         color: WHITE,
-        fontFamily: HEAD,
-        fontWeight: 700,
-        fontSize: 13,
+        fontFamily: CONDENSED,
+        fontWeight: 400,
+        fontSize: 14,
         lineHeight: 1,
         whiteSpace: "nowrap",
       }}
@@ -1519,7 +1450,7 @@ const PersonaTraitPill = ({ children, delay }) => {
 
 const PersonaHeroCard = ({ d }) => {
   const reduced = useStill();
-  const traits = [`${d.rides} trajets`, `${ridesPerWeek} par semaine`, d.neighborhood];
+  const traits = PERSONA.traits(d);
   return (
     <motion.div
       initial={reduced ? false : { opacity: 0, y: 18, scale: 0.98 }}
@@ -1532,7 +1463,7 @@ const PersonaHeroCard = ({ d }) => {
         minWidth: 0,
         boxSizing: "border-box",
         overflow: "hidden",
-        background: RED,
+        background: BRAND_PRIMARY,
         borderRadius: 24,
         padding: "32px 24px 28px",
         display: "flex",
@@ -1546,7 +1477,7 @@ const PersonaHeroCard = ({ d }) => {
         <PersonaIcon />
       </div>
       <StaggerText
-        text={PROFILE.title}
+        text={PERSONA.title}
         by="letter"
         delay={PERSONA_TITLE.delay}
         stagger={PERSONA_TITLE.stagger}
@@ -1557,7 +1488,7 @@ const PersonaHeroCard = ({ d }) => {
         delay={PERSONA_CARD.desc}
         style={{ fontFamily: BODY, fontSize: 16, lineHeight: 1.5, color: "rgba(255,255,255,0.9)", marginTop: 16, textAlign: "left" }}
       >
-        {PROFILE.desc(d)}
+        {PERSONA.desc(d)}
       </FadeUp>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 22 }}>
         {traits.map((t, i) => (
@@ -1602,7 +1533,7 @@ const IntroGiftBox = ({ opening }) => {
         style={{ position: "relative", zIndex: 2, marginBottom: -2 }}
       >
         <svg width="172" height="36" viewBox="0 0 172 36" aria-hidden style={{ display: "block" }}>
-          <rect x="0" y="0" width="172" height="36" rx="8" fill={RED} />
+          <rect x="0" y="0" width="172" height="36" rx="8" fill={BRAND_PRIMARY} />
           <rect x="72" y="0" width="28" height="36" fill={WHITE} />
           <rect x="0" y="30" width="172" height="6" fill="rgba(0,0,0,0.12)" />
         </svg>
@@ -1612,8 +1543,8 @@ const IntroGiftBox = ({ opening }) => {
       <svg width="150" height="116" viewBox="0 0 150 116" aria-hidden style={{ display: "block", position: "relative", zIndex: 1 }}>
         <defs>
           <linearGradient id="introGiftBody" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#EE3124" />
-            <stop offset="100%" stopColor="#C0392B" />
+            <stop offset="0%" stopColor={BRAND_PRIMARY} />
+            <stop offset="100%" stopColor={BRAND_DEEP} />
           </linearGradient>
         </defs>
         <rect x="0" y="0" width="150" height="116" rx="10" fill="url(#introGiftBody)" />
@@ -1675,26 +1606,23 @@ const IntroStage = () => {
         ) : (
           <motion.div key="reveal" style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <StaggerText
-              text="Votre été"
+              text="Ton année"
               delay={INTRO_TIMELINE.headline}
               stagger={INTRO_TIMELINE.wordStagger}
-              style={headline(70, BLACK)}
+              style={headline(INTRO_HEADLINE_SIZE, BLACK)}
             />
             <StaggerText
-              text="à vélo."
+              text="en mouvement."
               delay={INTRO_TIMELINE.headline + INTRO_TIMELINE.wordStagger * 2}
               stagger={INTRO_TIMELINE.wordStagger}
-              style={headline(70, RED)}
+              style={headline(INTRO_HEADLINE_SIZE, BRAND_PRIMARY)}
             />
             <FadeUp
               delay={INTRO_TIMELINE.subtitle}
-              style={{ fontFamily: BODY, fontWeight: 500, fontSize: 17, color: "#666666", marginTop: 22, lineHeight: 1.45, maxWidth: 280 }}
+              style={{ fontFamily: DISPLAY, fontWeight: 300, fontSize: 19, color: "#666666", marginTop: 22, lineHeight: 1.35, maxWidth: 280 }}
             >
-              Le récap de votre saison BIXI 2026
+              Le récap de ton année Nautilus{"\u00A0"}Plus 2026
             </FadeUp>
-            <div style={{ marginTop: 44 }}>
-              <SponsorIntro />
-            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1718,16 +1646,17 @@ const IntroTapHint = () => (
       display: "inline-flex",
       alignItems: "center",
       gap: 8,
-      fontFamily: BODY,
+      fontFamily: CONDENSED,
       fontSize: 13,
-      fontWeight: 500,
+      fontWeight: 400,
       color: "#666666",
-      letterSpacing: 0.2,
+      letterSpacing: 1.2,
+      textTransform: "uppercase",
       lineHeight: 1,
       animation: "hintPulse 1.8s ease-in-out 1s infinite",
     }}>
-      <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: RED }} />
-      Appuyez pour commencer
+      <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: BRAND_PRIMARY }} />
+      Appuie pour commencer
     </span>
   </FadeUp>
 );
@@ -1742,16 +1671,16 @@ const slides = (d, shareUi = {}) => [
     dark: false,
     render: () => (
       <>
-        <BreathingBlob color="rgba(238,49,36,0.22)" size={400} style={{ top: -70, right: -90 }} />
+        <BreathingBlob color={brandAlpha(0.22)} size={400} style={{ top: -70, right: -90 }} />
         <div aria-hidden style={{
           position: "absolute", top: 0, right: 0, width: "75%", height: "60%", zIndex: 1, pointerEvents: "none",
-          background: "radial-gradient(ellipse at 100% 0%, rgba(238,49,36,0.18) 0%, rgba(238,49,36,0.06) 42%, transparent 72%)",
+          background: `radial-gradient(ellipse at 100% 0%, ${brandAlpha(0.18)} 0%, ${brandAlpha(0.06)} 42%, transparent 72%)`,
         }} />
-        <BreathingBlob color="rgba(238,49,36,0.10)" size={300} style={{ bottom: -100, left: -110 }} duration={11} />
+        <BreathingBlob color={brandAlpha(0.1)} size={300} style={{ bottom: -100, left: -110 }} duration={11} />
         <Grain opacity={0.03} />
         <div style={{ position: "relative", zIndex: 5, display: "flex", flexDirection: "column", height: "100%" }}>
           <div style={{ marginTop: 8 }}>
-            <BixiLogo width={120} bg={WHITE} />
+            <NautilusLogo width={120} />
           </div>
           <IntroStage />
         </div>
@@ -1759,33 +1688,106 @@ const slides = (d, shareUi = {}) => [
     ),
   },
 
-  // 1 — RIDES
+  // 1 — VISITS
   {
-    shareFile: "bixi-2026-trajets.png",
-    bg: RED,
+    shareFile: "nautilus-2026-visites.png",
+    bg: BLACK,
+    dark: true,
+    render: () => (
+      <>
+        <BreathingBlob color={brandAlpha(0.22)} size={340} style={{ top: -120, right: -120 }} />
+        <Grain opacity={0.06} />
+        <DataSlide
+          tone="dark"
+          hero={<VisitsHeatmapHero visits={d.visits} />}
+          label="visites au gym cette année"
+          sentence="Tu t'es présenté·e plus souvent que 91% des membres."
+        />
+      </>
+    ),
+  },
+
+  // 2 — GROUP CLASSES
+  {
+    shareFile: "nautilus-2026-cours.png",
+    bg: BRAND_PRIMARY,
     dark: true,
     render: () => (
       <>
         <BreathingBlob color="rgba(255,255,255,0.10)" size={320} style={{ bottom: -120, left: -100 }} />
         <Grain opacity={0.05} />
         <DataSlide
-          tone="red"
-          hero={<RidesCountHero rides={d.rides} />}
-          label="trajets cette saison"
-          sentence={`${ridesPerWeek} trajets par semaine, plus que 94% des Bixistes.`}
+          tone="brand"
+          hero={<GroupClassesHero total={d.groupClasses} classes={CLASS_BREAKDOWN} favorite={d.favoriteClass} />}
+          label="cours de groupe cette année"
+          sentence="Le spinning, c'est ton terrain de jeu."
         />
       </>
     ),
   },
 
-  // 2 — BEST MONTH
+  // 3 — FAVORITE TIME
   {
-    shareFile: "bixi-2026-meilleur-mois.png",
+    shareFile: "nautilus-2026-heure.png",
+    bg: WHITE,
+    dark: false,
+    render: () => (
+      <>
+        <BreathingBlob color={brandAlpha(0.1)} size={300} style={{ bottom: -110, left: -110 }} duration={10} />
+        <Grain opacity={0.03} />
+        <DataSlide
+          tone="white"
+          hero={(
+            <>
+              <EntranceStep step={ENTRANCE_STEP.number} style={dataNumberStyle(DATA_TONES.white.number)}>
+                {d.favoriteTime}
+              </EntranceStep>
+              <DataVisual>
+                <BarChart
+                  bars={HOUR_BARS}
+                  stagger={0.05}
+                  gap={2}
+                  barColor="rgba(10,10,10,0.12)"
+                  highlightColor={BRAND_PRIMARY}
+                  labelColor="#666666"
+                />
+              </DataVisual>
+            </>
+          )}
+          label="ton heure préférée"
+          sentence="Pendant que la ville dort, toi, tu t'entraînes."
+        />
+      </>
+    ),
+  },
+
+  // 4 — LONGEST STREAK
+  {
+    shareFile: "nautilus-2026-serie.png",
+    bg: BRAND_PRIMARY,
+    dark: true,
+    render: () => (
+      <>
+        <BreathingBlob color="rgba(255,255,255,0.10)" size={320} style={{ top: -120, left: -110 }} />
+        <Grain opacity={0.05} />
+        <DataSlide
+          tone="brand"
+          hero={<StreakBlocksHero weeks={d.longestStreakWeeks} />}
+          label="semaines d'affilée"
+          sentence={`${d.longestStreakWeeks} semaines sans lâcher. Ça, c'est de la constance.`}
+        />
+      </>
+    ),
+  },
+
+  // 5 — BEST MONTH
+  {
+    shareFile: "nautilus-2026-meilleur-mois.png",
     bg: BLACK,
     dark: true,
     render: () => (
       <>
-        <BreathingBlob color="rgba(238,49,36,0.22)" size={340} style={{ top: -120, right: -120 }} />
+        <BreathingBlob color={brandAlpha(0.22)} size={340} style={{ top: -120, right: -120 }} />
         <Grain opacity={0.06} />
         <DataSlide
           tone="dark"
@@ -1795,48 +1797,34 @@ const slides = (d, shareUi = {}) => [
                 {d.bestMonth}
               </EntranceStep>
               <DataVisual>
-                <SeasonBarChart />
+                <BarChart
+                  bars={MONTH_BARS}
+                  barColor="rgba(255,255,255,0.25)"
+                  highlightColor={BRAND_PRIMARY}
+                  labelColor={WHITE}
+                />
               </DataVisual>
             </>
           )}
-          label="votre mois le plus actif"
-          sentence={`${d.bestMonthRides} trajets en ${d.bestMonth.toLowerCase()}, votre record de la saison.`}
+          label={`ton mois le plus actif, avec ${d.bestMonthVisits}\u00A0visites`}
+          sentence="Les résolutions, toi, tu les tiens."
         />
       </>
     ),
   },
 
-  // 3 — KM + NEIGHBOURHOOD + STATIONS
+  // 6 — FAVORITE GYM
   {
-    shareFile: "bixi-2026-distance.png",
-    bg: WHITE,
-    dark: false,
-    render: () => (
-      <>
-        <BreathingBlob color="rgba(238,49,36,0.10)" size={300} style={{ bottom: -110, left: -110 }} duration={10} />
-        <Grain opacity={0.03} />
-        <DataSlide
-          tone="white"
-          hero={<KmIslandHero km={d.km} />}
-          label="kilomètres parcourus"
-          sentence={`${ISLAND_LOOPS} Tours de l'île de Montréal. Vous êtes dans le Top 1 000.`}
-        />
-      </>
-    ),
-  },
-
-  // 4 — FAVORITE STATION
-  {
-    shareFile: "bixi-2026-station.png",
+    shareFile: "nautilus-2026-gym.png",
     bg: WHITE,
     dark: false,
     render: () => (
       <div style={{ position: "relative", zIndex: 5, display: "flex", flexDirection: "column", height: "100%" }}>
         <SlideTopSpacer />
         <FadeUp delay={0.1}>
-          <StatContextLabel dark={false}>Votre station préférée</StatContextLabel>
+          <StatContextLabel dark={false}>Ton gym préféré</StatContextLabel>
           <div style={headline(42, BLACK)}>
-            {favoriteStationDisplayLabel(d.favoriteStation)}
+            <NoBreakWords text={d.favoriteGym} />
           </div>
         </FadeUp>
         <FadeUp
@@ -1844,60 +1832,22 @@ const slides = (d, shareUi = {}) => [
           style={{
             fontFamily: BODY,
             fontSize: 15,
-            fontWeight: 500,
+            fontWeight: 400,
             color: LABEL_GRAY,
             lineHeight: 1.45,
             marginTop: 12,
           }}
         >
-          {d.stationRides} départs depuis cette station
+          {GYM_ADDRESS}
         </FadeUp>
-        <StationPhotoCard style={{ marginTop: 28, flex: 1, minHeight: 0, height: "auto", border: "none" }} />
+        <GymPhotoCard style={{ marginTop: 24, flex: 1, minHeight: 0 }} />
       </div>
     ),
   },
 
-  // 5 — ELECTRIC RIDES
+  // 7 — PERSONA
   {
-    shareFile: "bixi-2026-electrique.png",
-    bg: ELECTRIC_NAVY,
-    dark: true,
-    render: () => (
-      <>
-        <BreathingBlob color="rgba(31,91,214,0.18)" size={340} style={{ top: -120, right: -120 }} />
-        <Grain opacity={0.06} />
-        <DataSlide
-          tone="electric"
-          hero={<ElectricDonutHero electric={d.electricRides} total={d.rides} pct={electricPct} />}
-          label="trajets en vélo électrique"
-          sentence="Quand ça monte, vous passez à l'électrique."
-        />
-      </>
-    ),
-  },
-
-  // 6 — CO2 SAVED
-  {
-    shareFile: "bixi-2026-co2.png",
-    bg: RED,
-    dark: true,
-    render: () => (
-      <>
-        <BreathingBlob color="rgba(255,255,255,0.10)" size={320} style={{ top: -120, left: -110 }} />
-        <Grain opacity={0.05} />
-        <DataSlide
-          tone="red"
-          hero={<Co2TreesHero kg={d.co2Saved} trees={treesEquiv} />}
-          label="de CO₂ économisé"
-          sentence={`L'équivalent de ${treesEquiv} arbres plantés. Chaque trajet compte.`}
-        />
-      </>
-    ),
-  },
-
-  // 7 — PROFILE IDENTITY
-  {
-    shareFile: "bixi-2026-profil.png",
+    shareFile: "nautilus-2026-profil.png",
     bg: WHITE,
     dark: false,
     render: () => (
@@ -1933,7 +1883,7 @@ const slides = (d, shareUi = {}) => [
     ),
   },
 
-  // 9 — SHARE CARD (one red recap card on white)
+  // 9 — SHARE CARD (one brand-color recap card on white)
   {
     kind: "share",
     bg: WHITE,
@@ -1947,29 +1897,24 @@ const slides = (d, shareUi = {}) => [
         display: "flex",
         flexDirection: "column",
         gap: 16,
-        background: RED,
+        background: BRAND_PRIMARY,
         borderRadius: 24,
         padding: 24,
         color: WHITE,
         boxSizing: "border-box",
       }}>
         <FadeUp {...shareStep(0)}>
-          <BixiLogo width={110} bg={RED} />
+          <NautilusLogo width={96} bg={BRAND_PRIMARY} />
         </FadeUp>
 
-        <FadeUp {...shareStep(1)} style={{ fontFamily: HEAD, fontWeight: 800, fontSize: 32, lineHeight: 1.05, letterSpacing: "-0.02em" }}>
-          Votre saison 2026
+        <FadeUp {...shareStep(1)} style={{ fontFamily: DISPLAY, fontWeight: 900, fontSize: 32, lineHeight: 1.05, letterSpacing: "-0.02em" }}>
+          Ton année 2026
         </FadeUp>
 
-        <FadeUp {...shareStep(2)} style={{ display: "flex", alignItems: "center", gap: 8, lineHeight: 1 }}>
-          <span style={{ fontFamily: BODY, fontSize: 12, color: "rgba(255,255,255,0.7)", letterSpacing: 0.3 }}>Présenté par</span>
-          <SponsorLogo size={16} color={WHITE} />
-        </FadeUp>
-
-        <FadeUp {...shareStep(3)} style={{ display: "flex" }}>
+        <FadeUp {...shareStep(2)} style={{ display: "flex" }}>
           <span style={{
-            fontFamily: HEAD,
-            fontWeight: 800,
+            fontFamily: CONDENSED,
+            fontWeight: 700,
             fontSize: 14,
             letterSpacing: 1,
             textTransform: "uppercase",
@@ -1979,23 +1924,23 @@ const slides = (d, shareUi = {}) => [
             background: "rgba(255,255,255,0.18)",
             border: "1px solid rgba(255,255,255,0.35)",
           }}>
-            {PROFILE.title}
+            {PERSONA.title}
           </span>
         </FadeUp>
 
-        <FadeUp {...shareStep(4)} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <RecapTile value={d.rides} label="Trajets" />
-          <RecapTile value={d.km} unit="KM" label="Parcourus" />
-          <RecapTile value={Math.round(d.ridingMinutes / 60)} unit="H" label="À vélo" />
-          <RecapTile value={d.co2Saved} unit="KG" label="CO₂ économisé" />
+        <FadeUp {...shareStep(3)} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <RecapTile value={d.visits} label="Visites" />
+          <RecapTile value={d.groupClasses} label="Cours" />
+          <RecapTile value={d.hoursTrained} unit="H" label="D'entraînement" />
+          <RecapTile value={d.longestStreakWeeks} unit="SEM." label="D'affilée" />
         </FadeUp>
 
-        <FadeUp {...shareStep(5)}>
-          <RecapStationRow station={favoriteStationDisplayLabel(d.favoriteStation)} />
+        <FadeUp {...shareStep(4)}>
+          <RecapGymRow gym={d.favoriteGym} />
         </FadeUp>
 
         {/* The exported image swaps the button for a closing strip */}
-        <FadeUp {...shareStep(6)} style={{ marginTop: "auto" }}>
+        <FadeUp {...shareStep(5)} style={{ marginTop: "auto" }}>
           {still ? <ShareClosingStrip /> : (
             <motion.div
               animate={shareUi.pulseShare
@@ -2023,11 +1968,17 @@ const slides = (d, shareUi = {}) => [
 ];
 
 // ---------------------------------------------------------------------------
-// Loading screen — wheel draws itself, spins once, messages rotate
+// Loading screen — ring and dumbbell draw themselves, spin once, messages rotate
 // ---------------------------------------------------------------------------
 const LOADING_MS = 3000;
-const LOADING_MESSAGES = ["On compte vos trajets...", "On retrace votre été...", "On prépare votre surprise..."];
-const WHEEL_SPOKES = Array.from({ length: 8 }, (_, i) => (i * Math.PI) / 4);
+const LOADING_MESSAGES = ["On compte tes visites...", "On retrace ton année...", "On prépare ta surprise..."];
+const LOADING_DUMBBELL = [
+  { d: "M38 50 H62", width: 4 },
+  { d: "M34 38 V62", width: 6 },
+  { d: "M66 38 V62", width: 6 },
+  { d: "M27 44 V56", width: 5 },
+  { d: "M73 44 V56", width: 5 },
+];
 
 function LoadingScreen() {
   const reduced = useStill();
@@ -2069,20 +2020,11 @@ function LoadingScreen() {
         transition={{ delay: 1.5, duration: 1, ease: [0.65, 0, 0.35, 1] }}
         style={{ width: 96, height: 96 }}
       >
-        <svg width="96" height="96" viewBox="0 0 100 100" fill="none" stroke={RED} strokeLinecap="round" aria-hidden>
+        <svg width="96" height="96" viewBox="0 0 100 100" fill="none" stroke={BRAND_PRIMARY} strokeLinecap="round" aria-hidden>
           <motion.circle cx="50" cy="50" r="42" strokeWidth="6" {...draw(0, 0.9)} />
-          {WHEEL_SPOKES.map((a, i) => (
-            <motion.line
-              key={i}
-              x1={50 + Math.cos(a) * 8}
-              y1={50 + Math.sin(a) * 8}
-              x2={50 + Math.cos(a) * 39}
-              y2={50 + Math.sin(a) * 39}
-              strokeWidth="2.5"
-              {...draw(0.55 + i * 0.05, 0.4)}
-            />
+          {LOADING_DUMBBELL.map((part, i) => (
+            <motion.path key={i} d={part.d} strokeWidth={part.width} {...draw(0.45 + i * 0.08, 0.4)} />
           ))}
-          <motion.circle cx="50" cy="50" r="6" strokeWidth="4" {...draw(0.45, 0.4)} />
         </svg>
       </motion.div>
       <div style={{ height: 24, marginTop: 28, display: "flex", alignItems: "center" }}>
@@ -2093,7 +2035,7 @@ function LoadingScreen() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.25 }}
-            style={{ fontFamily: BODY, fontSize: 15, fontWeight: 500, color: "#666666", letterSpacing: 0.2 }}
+            style={{ fontFamily: BODY, fontSize: 15, fontWeight: 400, color: "#666666", letterSpacing: 0.2 }}
           >
             {LOADING_MESSAGES[msg]}
           </motion.p>
@@ -2169,7 +2111,7 @@ function StorySlide({ custom, reduced, onTiming, style, children }) {
 
 function StoryProgress({ count, idx, progress, onColoredBg }) {
   const track = onColoredBg ? "rgba(255,255,255,0.35)" : "rgba(10,10,10,0.14)";
-  const fill = onColoredBg ? WHITE : RED;
+  const fill = onColoredBg ? WHITE : BRAND_PRIMARY;
   const fillStyle = { height: "100%", background: fill, transformOrigin: "left center", transition: "background-color 0.35s" };
   return (
     <div aria-hidden style={{ position: "absolute", top: 12, left: 24, right: 24, display: "flex", gap: 4, zIndex: 40, pointerEvents: "none" }}>
@@ -2186,9 +2128,9 @@ function StoryProgress({ count, idx, progress, onColoredBg }) {
   );
 }
 
-// Logo + discreet sponsor, sitting below the progress bars.
+// Logo, sitting below the progress bars.
 // Part of each slide's entrance; rendered inside the slide so it leaves with it.
-const StoryHeader = ({ bg, showLogo }) => {
+const StoryHeader = ({ bg }) => {
   const reduced = useStill();
   return (
     <motion.div
@@ -2204,11 +2146,9 @@ const StoryHeader = ({ bg, showLogo }) => {
         pointerEvents: "none",
         display: "flex",
         alignItems: "center",
-        justifyContent: showLogo ? "space-between" : "flex-end",
       }}
     >
-      {showLogo && <SlideTopLogo bg={bg} />}
-      <SponsorHeaderCorner bg={bg} />
+      <SlideTopLogo bg={bg} />
     </motion.div>
   );
 };
@@ -2222,7 +2162,7 @@ function ShareImageFrame({ slide, frameRef }) {
       <div
         ref={frameRef}
         aria-hidden
-        className="bixi-still"
+        className="share-still"
         style={{
           position: "fixed",
           left: -10000,
@@ -2239,9 +2179,8 @@ function ShareImageFrame({ slide, frameRef }) {
           <div style={{ height: innerH }}>{slide.render({ still: true })}</div>
         ) : (
           <>
-            <div style={{ position: "absolute", top: SHARE_IMG_PAD_TOP, left: SHARE_IMG_PAD_X, right: SHARE_IMG_PAD_X, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ position: "absolute", top: SHARE_IMG_PAD_TOP, left: SHARE_IMG_PAD_X, right: SHARE_IMG_PAD_X, zIndex: 30, display: "flex", alignItems: "center" }}>
               <SlideTopLogo bg={slide.bg} />
-              <SponsorHeaderCorner bg={slide.bg} />
             </div>
             <div style={{ height: innerH - JOIN_STRIP_H - JOIN_STRIP_GAP }}>{slide.render({ still: true })}</div>
             <div style={{ position: "relative", zIndex: 30, marginTop: JOIN_STRIP_GAP }}>
@@ -2461,7 +2400,9 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: "#060606", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=Inter:wght@400;500&family=Space+Grotesk:wght@700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;700&family=Lato:wght@400;700&display=swap');
+        @font-face { font-family: 'Noyh'; src: url('/fonts/Noyh-Heavy.woff2') format('woff2'); font-weight: 900; font-display: swap; }
+        @font-face { font-family: 'Noyh'; src: url('/fonts/Noyh-Light.woff2') format('woff2'); font-weight: 300; font-display: swap; }
         * { box-sizing:border-box; margin:0; padding:0; }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes drift {
@@ -2486,7 +2427,7 @@ export default function App() {
           50%      { opacity: 0.4; }
         }
         .story-paused * { animation-play-state: paused !important; }
-        .bixi-still *, .bixi-still *::before, .bixi-still *::after { animation: none !important; transition: none !important; }
+        .share-still *, .share-still *::before, .share-still *::after { animation: none !important; transition: none !important; }
         @media (prefers-reduced-motion: reduce) {
           *, *::before, *::after {
             animation-duration: 0.01ms !important;
@@ -2545,8 +2486,8 @@ export default function App() {
                     background: current.bg,
                   }}
                 >
-                  {/* The share card carries its own logo + sponsor header */}
-                  {!isLast && <StoryHeader bg={current.bg} showLogo={!isFirst} />}
+                  {/* The intro and the share card carry their own logo */}
+                  {!isFirst && !isLast && <StoryHeader bg={current.bg} />}
                   {current.render()}
                   {current.shareFile && (
                     <EntranceStep
@@ -2570,11 +2511,11 @@ export default function App() {
                   textAlign: "center", pointerEvents: "all",
                 }}
               >
-                <svg width="36" height="36" viewBox="0 0 100 100" fill="none" style={{ animation: "spin 0.85s linear infinite", color: RED }}>
+                <svg width="36" height="36" viewBox="0 0 100 100" fill="none" style={{ animation: "spin 0.85s linear infinite", color: BRAND_PRIMARY }}>
                   <circle cx="50" cy="50" r="42" stroke="currentColor" strokeWidth="10" strokeDasharray="66 200" strokeLinecap="round" />
                 </svg>
-                <span style={{ fontFamily: HEAD, fontWeight: 600, fontSize: 20, color: WHITE, letterSpacing: 0.5, textTransform: "uppercase" }}>
-                  Préparation de votre image…
+                <span style={{ fontFamily: CONDENSED, fontWeight: 400, fontSize: 20, color: WHITE, letterSpacing: 0.5, textTransform: "uppercase" }}>
+                  Préparation de ton image…
                 </span>
                 <span style={{ fontFamily: BODY, fontSize: 12, color: "rgba(255,255,255,0.55)", maxWidth: 260, lineHeight: 1.5 }}>
                   Un instant, on prépare tout pour le partage.
